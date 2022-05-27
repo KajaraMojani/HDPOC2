@@ -1,8 +1,13 @@
 // Allow access to the list of AWS Availability Zones within the AWS Region that is configured in vars.tf and init.tf.
 // See https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/availability_zones
-data "aws_availability_zones" "available" {}
+data "aws_availability_zones" "available" {
+    state = "available"
+}
 data "aws_caller_identity" "current" {}
 
+locals {
+    azs = slice(data.aws_availability_zones.available.names, 0, local.required_azs)
+}
 
 
 // Create the required VPC resources in your AWS account.
@@ -12,18 +17,17 @@ module "vpc" {
   version = "3.11.2"
 
   name = local.prefix
-  cidr = var.cidr_block
-  azs  = data.aws_availability_zones.available.names
+  cidr = local.cidr_block
+  azs  = local.azs
   tags = var.tags
 
   enable_dns_hostnames = true
   enable_nat_gateway   = true
   single_nat_gateway   = false
-  create_igw           = false
+  create_igw           = true
 
-  public_subnets  = [cidrsubnet(var.cidr_block, 3, 0)]
-  private_subnets = [cidrsubnet(var.cidr_block, 3, 1),
-                     cidrsubnet(var.cidr_block, 3, 2)]
+  public_subnets = slice(local.small_subnet_cidrs, local.required_azs, local.required_azs * 2)
+  private_subnets = [ for raz in range(local.required_azs) : cidrsubnet(local.cidr_block, var.subnet_offset, raz) ]
 
   manage_default_security_group = true
   default_security_group_name = "${local.prefix}-sg"
@@ -159,7 +163,7 @@ resource "aws_default_network_acl" "main" {
     from_port   = 0
     to_port     = 0
     protocol    = "all"
-    cidr_block  = "${var.cidr_block}"
+    cidr_block  = "${local.cidr_block}"
   }
 
   tags = merge({
